@@ -1,0 +1,13 @@
+# Garmin firmware binaries are deliberately never committed.
+firmware/*
+!firmware/README.md
+
+*.zip
+*.gsp
+*.gcd
+*.rgn
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
