@@ -35,5 +35,6 @@ firmware.
 ## Pull requests
 
 - Keep shell scripts POSIX-friendly where practical, but `bash` is fine.
-- Run `bash -n scripts/*.sh` before submitting.
+- Run `bash -n scripts/*.sh` and `python3 -m py_compile scripts/*.py`
+  before submitting.
 - Never commit a real device report with personal identifiers.

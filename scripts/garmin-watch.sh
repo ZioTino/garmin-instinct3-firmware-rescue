@@ -17,7 +17,7 @@ WATCH_ROOT=""
 GARMIN_DIR=""
 
 die()  { echo "ERROR: $*" >&2; exit 1; }
-info() { echo "==> $*"; }
+info() { echo "==> $*" >&2; }
 warn() { echo "WARNING: $*" >&2; }
 
 usage() {

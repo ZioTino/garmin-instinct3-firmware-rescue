@@ -19,6 +19,20 @@ These are the primary sources used to build and verify this method.
 - **Instinct 3 Solar owner's manual** — software update menu reference.
   <https://www8.garmin.com/manuals/webhelp/GUID-2C274FD2-F0C3-445C-B0AC-700FECCE12E9/EN-US/>
 
+## Update service and open-source clients
+
+- Garmin's OMT update endpoint used by Garmin Express:
+  `https://omt.garmin.com/Rce/ProtobufApi/SoftwareUpdateService/GetAllUnitSoftwareUpdates`.
+  It accepts a JSON body with a `GarminDeviceXml` field and returns
+  `SoftwareUpdateOptions` (version, URL, MD5, size, access level).
+
+- **GarminServerLess** — documents the JSON request shape and response fields:
+  <https://github.com/abadiet/GarminServerLess>
+
+- **openExpress** — a Linux Garmin Express replacement; its update flow and
+  access-level handling were used as a cross-check:
+  <https://github.com/TomaszBojanowski/openExpress>
+
 ## Garmin forums (field reports)
 
 - **Instinct 3 stuck at v5.21 and “Restarting...” after updates** — the exact

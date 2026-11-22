@@ -40,20 +40,47 @@ On Linux:
 
 The script prints the model, version, free space, and any cleanup targets.
 
-## 2. Download the official package
+## 2. Discover and download the official package
+
+With the watch connected (normal MTP mode is fine):
+
+```bash
+./scripts/fetch-firmware.sh --auto
+```
+
+The helper:
+
+1. Reads the watch's `GarminDevice.xml`.
+2. Sends a **sanitized** copy to Garmin's update service
+   (`SoftwareUpdateService/GetAllUnitSoftwareUpdates`) — the same service
+   Garmin Express uses.
+3. Requests the **live** channel and selects the system bundle
+   (`GUPDATE.GSP` / `GUPDATE.GCD`).
+4. Downloads it from Garmin's `download.garmin.com` server, checks the size and
+   MD5 that Garmin reports, extracts `gupdate.gsp` + `force.tmp`, and writes
+   `version.txt` and a SHA-256 file.
+
+No personal identifiers are sent: the unit id is replaced with a neutral value
+(`1`), and `<Extensions>` / `<DataType>` are stripped.
+
+If no watch is connected, ask for a specific model:
 
 ```bash
 ./scripts/fetch-firmware.sh --model 006-V4585-00
 ```
 
-The script downloads the ZIP from Garmin's official `download.garmin.com`
-server, checks the archive, extracts `gupdate.gsp` and `force.tmp`, and writes a
-SHA-256 file.
+If Garmin answers with a beta/alpha access level, the script stops. Pass
+`--allow-nonlive` only if you deliberately want that build.
 
-If the link has expired, find the current Instinct 3 beta/backdate announcement
-on the Garmin forums and use its model-specific ZIP, or download the matching
-`gupdate.gsp` from Garmin support. Verify the embedded manifest references
-your model/package part number:
+If the service changes or is unreachable, use a direct official URL:
+
+```bash
+./scripts/fetch-firmware.sh --url 'https://download.garmin.com/gsup/.../gupdate.gsp' \
+  --slug instinct3-solar-45 --version 15.19
+```
+
+The link may be a raw `.gsp` or a ZIP containing `gupdate.gsp` and `force.tmp`.
+Verify the embedded manifest references your model/package part number:
 
 ```bash
 strings firmware/extracted/instinct3-solar-45/gupdate.gsp \

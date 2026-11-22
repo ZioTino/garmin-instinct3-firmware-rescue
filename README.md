@@ -10,6 +10,10 @@ Express, Garmin Connect, Windows, or a phone. It clears stale update data that
 Garmin normally hides, then installs an official, signed `GUPDATE.GSP`
 package.
 
+The download helper **asks Garmin for the latest live version for your exact
+model** instead of pinning a firmware release. At the time of writing it finds
+15.19 for the Solar/E models and 16.12 for the AMOLED/Crossover models.
+
 > **Verified:** Instinct 3 – 45 mm, Solar, firmware **5.21 → 15.19**.
 > Free space went from ~21 MB to **58 MB**, and the update completed normally.
 
@@ -49,27 +53,51 @@ Two details matter:
 
 The watch consumes both files during a successful install.
 
+## How version discovery works
+
+`scripts/fetch-firmware.sh` reads the watch's `GarminDevice.xml` and posts a
+sanitized copy to Garmin's update service
+(`SoftwareUpdateService/GetAllUnitSoftwareUpdates`), the same service Garmin
+Express uses. Garmin answers with the current update options, including a
+signed `GUPDATE.GSP` system bundle, its version, size, MD5, and download URL.
+
+Privacy details:
+
+- The unit id is replaced with a neutral value (`1`).
+- `<Extensions>` and `<DataType>` elements are removed.
+- No serial number, account, or real unit id is sent.
+
+The script requests the **live** channel by default. If Garmin answers with a
+beta/alpha access level, it stops instead of installing it; pass
+`--allow-nonlive` only if that is intentional. It also warns if the live
+version is older than the version installed on the watch (for example while
+running a beta). If the service changes or is unreachable, `--model`, `--xml`,
+and `--url` provide fallbacks.
+
 ## Quick start (Linux)
 
-Requirements: **Bash 4+**, `curl`, `unzip`, `gio` / `gvfs-backends`,
-`udisksctl` (optional, for mass-storage mode), `sha256sum`. The helper scripts
-are Linux-oriented; Windows and macOS users can follow the manual steps in
-`docs/PROCEDURE.md`.
+Requirements: **Bash 4+**, `curl`, `unzip`, `python3`, `gio` /
+`gvfs-backends`, `udisksctl` (optional, for mass-storage mode), `md5sum`,
+`sha256sum`. The helper scripts are Linux-oriented; Windows and macOS users
+can follow the manual steps in `docs/PROCEDURE.md`.
 
 ```bash
 git clone https://github.com/ZioTino/garmin-instinct3-firmware-rescue.git
 cd garmin-instinct3-firmware-rescue
 
-# 1. Download the official package for your exact model
-./scripts/fetch-firmware.sh --model 006-V4585-00
-
-# 2. Connect the watch normally and confirm the model/version
+# 1. Connect the watch normally and confirm the model/version
 ./scripts/garmin-watch.sh status
+
+# 2. Discover and download the latest live package for this watch
+./scripts/fetch-firmware.sh --auto
+
+#    No watch connected? Ask for a model instead:
+#    ./scripts/fetch-firmware.sh --model 006-V4585-00
 
 # 3. Power the watch off, then connect it while holding GPS for 30 seconds
 #    (see the detailed procedure below)
 
-# 4. Clear hidden update junk and install the package
+# 4. Clear hidden update junk and install the discovered package
 ./scripts/garmin-watch.sh clean
 ./scripts/garmin-watch.sh install
 ./scripts/garmin-watch.sh unmount
@@ -102,11 +130,10 @@ safely, power off, and repeat the GPS-hold step.
 See [docs/PROCEDURE.md](docs/PROCEDURE.md) for the full walkthrough,
 including Windows/macOS notes and the exact cleanup list.
 
-## Supported models and packages
+## Supported models
 
-These are the official Garmin **15.19** rescue packages published in the
-Instinct 3 beta announcement. Use the package that matches the model reported
-by `GarminDevice.xml`.
+Package IDs identify the model. The script discovers the current live version
+at runtime, so the table does not pin a release.
 
 | Model | Package ID | `fetch-firmware.sh --model` |
 |---|---|---|
@@ -118,9 +145,9 @@ by `GarminDevice.xml`.
 | Instinct Crossover AMOLED | `006-V4678-00` | `006-V4678-00` |
 | Instinct 3 Solar 50 mm | `006-V4759-00` | `006-V4759-00` |
 
-For the 45 mm Solar, 15.19 is the current stable release at the time of
-writing. Newer 16.x builds are rolling out to other Instinct 3 variants; once
-the watch has healthy free space, normal OTA updates work again.
+At the time of writing, live versions were **15.19** for the Solar/E models
+and **16.12** for the AMOLED/Crossover models. Once the watch has healthy free
+space, normal OTA updates work again.
 
 ## Troubleshooting
 
@@ -134,6 +161,11 @@ See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). The most common ones:
 | Still on old version after reboot | Re-check `force.tmp`, free space, and the package/model match. |
 | Stuck on `Restarting...` | Wait up to 30 minutes; do not reset or unplug. |
 | Garmin Express says “not enough memory” | Use this manual method instead. |
+| `fetch-firmware.sh` cannot reach Garmin | Retry; then use `--model ID` or a direct `--url` from a Garmin announcement. |
+| Garmin offers a beta/alpha build | The script refuses unless you pass `--allow-nonlive`. |
+| Garmin flags a reinstall | The watch is already on that version; installing again is unnecessary. |
+| Live build is older than installed | You are probably on a beta. The script warns; do not downgrade unless intended. |
+| Download size or MD5 mismatch | Delete `firmware/downloads/` and retry; never install an unverified file. |
 
 ## Safety and disclaimer
 
@@ -145,15 +177,22 @@ See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). The most common ones:
 - This project is **not affiliated with Garmin**. Garmin, Instinct, and related
   marks are trademarks of Garmin Ltd.
 - Firmware binaries are **not hosted in this repository**. The fetch script
-  downloads them from Garmin's official `download.garmin.com` servers, and
-  verifies a SHA-256 when a known hash is available.
+  downloads them from Garmin's official `download.garmin.com` servers, checks
+  the MD5 and size Garmin reports, and records a SHA-256 of the extracted
+  `GUPDATE.GSP`.
+- Version discovery sends only the model, current version, and update-file
+  list. It uses a neutral unit id and strips `<Extensions>` / `<DataType>`.
 - A factory reset keeps the installed firmware. It only clears user data and
   settings.
 
 ## Credits
 
 The procedure combines Garmin's official Instinct 3 support FAQ with field
-reports from the Garmin forums. See [docs/SOURCES.md](docs/SOURCES.md).
+reports from the Garmin forums. The JSON update-service request shape was
+cross-checked against the open-source
+[GarminServerLess](https://github.com/abadiet/GarminServerLess) and
+[openExpress](https://github.com/TomaszBojanowski/openExpress) projects.
+See [docs/SOURCES.md](docs/SOURCES.md).
 
 ## License
 

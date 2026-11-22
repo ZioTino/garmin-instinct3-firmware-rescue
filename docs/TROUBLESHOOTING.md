@@ -1,5 +1,36 @@
 # Troubleshooting
 
+## Auto-discovery fails or returns an error
+
+`fetch-firmware.sh` asks Garmin's OMT update service for the latest live
+package. If that service is unreachable or has changed:
+
+1. Retry once; Garmin occasionally returns transient 5xx errors.
+2. Try `./scripts/fetch-firmware.sh --model 006-V4585-00` (use the package ID
+   from the README) so no watch connection is needed.
+3. Use a direct official URL from a Garmin forum announcement:
+   `./scripts/fetch-firmware.sh --url '<url>' --slug instinct3-solar-45 --version 15.19`.
+4. Do not install a file whose size or MD5 does not match what Garmin reports.
+
+## Garmin flags the package as a reinstall
+
+If `version.txt` / the script says `reinstall`, the watch is already on that
+version. Installing it again is harmless but unnecessary. This is what happens
+when you run discovery after a successful update.
+
+## The live build is older than the installed build
+
+You are probably running a beta/alpha build that is newer than the current live
+release. The script warns about the downgrade. Stay on the beta, or wait for the
+live release to catch up; do not install the older build unless you intend to
+backdate.
+
+## Garmin offers a beta/alpha build
+
+The script requests the live channel and replaces the unit id with a neutral
+value. If the response is still not `live`, it stops. Pass `--allow-nonlive`
+only if you intentionally want a beta/alpha build.
+
 ## The watch is not detected
 
 - Use a data-capable cable and a direct USB port.

@@ -5,15 +5,19 @@ No firmware binaries are stored in this repository.
 Use:
 
 ```bash
-./scripts/fetch-firmware.sh --model 006-V4585-00
+./scripts/fetch-firmware.sh --auto
 ```
 
-The script downloads the official package from Garmin's
-`download.garmin.com` server and extracts:
+The script asks Garmin for the latest **live** package for the connected model,
+downloads it from Garmin's `download.garmin.com` server, checks Garmin's size
+and MD5, and extracts:
 
 - `GUPDATE.GSP`
 - `force.tmp`
-- a SHA-256 checksum file
+- `gupdate.gsp.sha256`
+- `version.txt` (discovered version, access level, source URL, hashes)
+
+Without a connected watch, use `--model 006-V4585-00` (see the README table).
 
 The `firmware/` directory contents are ignored by git (see `.gitignore`).
 

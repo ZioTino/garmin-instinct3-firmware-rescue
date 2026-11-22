@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 #
-# Download an official Garmin Instinct 3 rescue package (15.19) for an exact
-# model, extract GUPDATE.GSP + force.tmp, and write a SHA-256 file.
+# Discover the latest LIVE system software for an Instinct 3 model from Garmin's
+# update service, download it, and extract GUPDATE.GSP + force.tmp.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,86 +10,74 @@ REPO_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 FW_ROOT="${FW_ROOT:-$REPO_DIR/firmware}"
 
 MODEL=""
-LIST=0
 AUTO=0
+XML=""
+URL=""
+SLUG=""
+VERSION_LABEL=""
+ALLOW_NONLIVE=0
+LIST=0
 
 die()  { echo "ERROR: $*" >&2; exit 1; }
-info() { echo "==> $*"; }
+info() { echo "==> $*" >&2; }
+warn() { echo "WARNING: $*" >&2; }
 
 usage() {
   cat <<'EOF'
-Usage: fetch-firmware.sh --model <package-id> [--list]
-       fetch-firmware.sh --auto
+Usage: fetch-firmware.sh [options]
+
+By default, with the watch connected in normal MTP mode, the script reads its
+GarminDevice.xml and asks Garmin for the latest LIVE system software.
 
 Options:
-  --model ID   Package id, e.g. 006-V4585-00 (Instinct 3 Solar 45 mm)
-  --auto       Read the model from the connected watch (normal MTP mode)
-  --list       List known models and package ids
-  --help       Show this help
+  --auto                 Read the model from the connected watch (default)
+  --model ID             Package id, e.g. 006-V4585-00, when no watch is connected
+  --xml FILE             Use a specific GarminDevice.xml
+  --url URL              Skip discovery and download this official URL
+  --slug NAME            Output directory name (with --url)
+  --version LABEL        Version label (with --url)
+  --allow-nonlive        Accept beta/alpha offers (default: live only)
+  --list                 List known model/package ids
+  --help                 Show this help
 
 Environment:
-  FW_ROOT      Download/extract root (default: <repo>/firmware)
+  FW_ROOT                Download/extract root (default: <repo>/firmware)
+  MTP_URI                Override MTP URI for auto-detection
+  WATCH_ROOT             Use an already-mounted watch path
 EOF
 }
 
+# label | slug | device part (package part is the key)
 declare -A PKG=(
-  [006-V4583-00]="Instinct E 40 mm|instinct-e-40|https://download.garmin.com/gsup/006-V4583-00/15.19/full/rel/9256fff8-5075-4d9c-9602-db47c83aef5e/IE%2040%20-%2015.19%20backdate.zip"
-  [006-V4584-00]="Instinct E 45 mm|instinct-e-45|https://download.garmin.com/gsup/006-V4584-00/15.19/full/rel/0b1a27be-0598-448f-b979-1204a2e87cd4/IE%2045%20-%2015.19%20backdate.zip"
-  [006-V4585-00]="Instinct 3 Solar 45 mm|instinct3-solar-45|https://download.garmin.com/gsup/006-V4585-00/15.19/full/rel/50bcd893-abfc-4314-a2d6-37ade3b5def4/I3%20Solar%2045%20-%2015.19%20backdate.zip"
-  [006-V4586-00]="Instinct 3 AMOLED 45 mm|instinct3-amoled-45|https://download.garmin.com/gsup/006-V4586-00/15.19/full/rel/94826927-ffaf-441b-97d8-03f61da03e79/I3%20AMOLED%2045%20-%2015.19%20backdate.zip"
-  [006-V4587-00]="Instinct 3 AMOLED 50 mm|instinct3-amoled-50|https://download.garmin.com/gsup/006-V4587-00/15.19/full/rel/f99029e0-3141-4179-b830-0dc48c44ca71/I3%20AMOLED%2050%20-%2015.19%20backdate.zip"
-  [006-V4678-00]="Instinct Crossover AMOLED|instinct-crossover-amoled|https://download.garmin.com/gsup/006-V4678-00/15.19/full/rel/6e8c231c-29fd-49f4-bbea-5a6240fc42ba/Crossover%20AMOLED%20-%2015.19%20backdate.zip"
-  [006-V4759-00]="Instinct 3 Solar 50 mm|instinct3-solar-50|https://download.garmin.com/gsup/006-V4759-00/15.19/full/rel/623ac636-dcf9-4f1c-87bc-258f50b778ca/I3%20Solar%2050%20-%2015.19%20backdate.zip"
-)
-
-declare -A KNOWN_SHA=(
-  [006-V4585-00]="37e2ff741f61b7410d41022ec4c24c381ca4d2ba0911ae7be6da1fd502957cd8"
+  [006-V4583-00]="Instinct E 40 mm|instinct-e-40|006-B4583-00"
+  [006-V4584-00]="Instinct E 45 mm|instinct-e-45|006-B4584-00"
+  [006-V4585-00]="Instinct 3 Solar 45 mm|instinct3-solar-45|006-B4585-00"
+  [006-V4586-00]="Instinct 3 AMOLED 45 mm|instinct3-amoled-45|006-B4586-00"
+  [006-V4587-00]="Instinct 3 AMOLED 50 mm|instinct3-amoled-50|006-B4587-00"
+  [006-V4678-00]="Instinct Crossover AMOLED|instinct-crossover-amoled|006-B4678-00"
+  [006-V4759-00]="Instinct 3 Solar 50 mm|instinct3-solar-50|006-B4759-00"
 )
 
 print_list() {
   printf '%-16s  %-28s  %s\n' "PACKAGE ID" "MODEL" "SLUG"
-  local id rest label slug url
+  local id rest label slug dev
   for id in "${!PKG[@]}"; do
     rest="${PKG[$id]}"
-    IFS='|' read -r label slug url <<< "$rest"
+    IFS='|' read -r label slug dev <<< "$rest"
     printf '%-16s  %-28s  %s\n' "$id" "$label" "$slug"
   done | sort
-}
-
-detect_model() {
-  local root xml part desc candidate
-  root="$("$SCRIPT_DIR/garmin-watch.sh" mount)" || die "Could not find a connected watch"
-  xml="$root/Garmin/GarminDevice.xml"
-  [[ -f "$xml" ]] || xml="$root/GARMIN/GarminDevice.xml"
-  [[ -f "$xml" ]] || die "GarminDevice.xml not found under $root"
-
-  part="$(grep -oE '<PartNumber>[^<]*' "$xml" | head -1 | sed 's/<[^>]*>//')"
-  desc="$(grep -oE '<Description>[^<]*' "$xml" | head -1 | sed 's/<[^>]*>//')"
-
-  # Most Instinct 3 package ids are the device id with B -> V.
-  candidate="${part/006-B/006-V}"
-  if [[ -n "${PKG[$candidate]:-}" ]]; then
-    printf '%s\n' "$candidate"
-    return
-  fi
-
-  case "$desc" in
-    *Crossover*)                    printf '006-V4678-00\n' ;;
-    *"Instinct E"*40*)              printf '006-V4583-00\n' ;;
-    *"Instinct E"*45*)              printf '006-V4584-00\n' ;;
-    *"Instinct 3"*45*Solar*)        printf '006-V4585-00\n' ;;
-    *"Instinct 3"*50*Solar*)        printf '006-V4759-00\n' ;;
-    *"Instinct 3"*45*AMOLED*)       printf '006-V4586-00\n' ;;
-    *"Instinct 3"*50*AMOLED*)       printf '006-V4587-00\n' ;;
-    *) die "Unrecognized model: '${desc:-unknown}' (part ${part:-unknown}); use --model ID" ;;
-  esac
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --model) [[ $# -ge 2 ]] || die "--model needs an id"; MODEL="$2"; shift 2 ;;
-    --auto)  AUTO=1; shift ;;
-    --list)  LIST=1; shift ;;
+    --auto) AUTO=1; shift ;;
+    --xml) [[ $# -ge 2 ]] || die "--xml needs a file"; XML="$2"; shift 2 ;;
+    --url) [[ $# -ge 2 ]] || die "--url needs a URL"; URL="$2"; shift 2 ;;
+    --slug) [[ $# -ge 2 ]] || die "--slug needs a name"; SLUG="$2"; shift 2 ;;
+    --version) [[ $# -ge 2 ]] || die "--version needs a label"; VERSION_LABEL="$2"; shift 2 ;;
+    --allow-nonlive) ALLOW_NONLIVE=1; shift ;;
+    --list) LIST=1; shift ;;
     --help|-h) usage; exit 0 ;;
     *) die "Unknown option: $1" ;;
   esac
@@ -100,63 +88,168 @@ if [[ "$LIST" == "1" ]]; then
   exit 0
 fi
 
-if [[ "$AUTO" == "1" && -z "$MODEL" ]]; then
-  MODEL="$(detect_model)"
+command -v curl >/dev/null 2>&1 || die "curl is required"
+command -v python3 >/dev/null 2>&1 || die "python3 is required"
+command -v md5sum >/dev/null 2>&1 || die "md5sum is required"
+
+JSON_TMP="$(mktemp)"
+trap 'rm -f "$JSON_TMP"' EXIT
+
+if [[ -n "$URL" ]]; then
+  SLUG="${SLUG:-manual}"
+  VERSION_LABEL="${VERSION_LABEL:-manual}"
+  ACCESS="manual"
+  PACKAGE_PART="manual"
+  MD5=""
+  SIZE=""
+  DISPLAY="manual download"
+  LABEL="manual download"
+  REINSTALL=0
+else
+  DISCOVER_ARGS=()
+  if [[ -n "$XML" ]]; then
+    [[ -f "$XML" ]] || die "XML file not found: $XML"
+    DISCOVER_ARGS=(--xml "$XML")
+  elif [[ -n "$MODEL" ]]; then
+    MODEL="${MODEL^^}"
+    [[ "$MODEL" == 006-B* ]] && MODEL="${MODEL/006-B/006-V}"
+    [[ -n "${PKG[$MODEL]:-}" ]] || die "Unknown package id '$MODEL'. Use --list."
+    DISCOVER_ARGS=(--model "$MODEL")
+  else
+    AUTO=1
+    ROOT="$("$SCRIPT_DIR/garmin-watch.sh" mount)" \
+      || die "Could not find a connected watch. Use --model ID or --xml FILE."
+    XML="$ROOT/Garmin/GarminDevice.xml"
+    [[ -f "$XML" ]] || XML="$ROOT/GARMIN/GarminDevice.xml"
+    [[ -f "$XML" ]] || die "GarminDevice.xml not found under the watch root"
+    DISCOVER_ARGS=(--xml "$XML")
+  fi
+
+  if [[ "$ALLOW_NONLIVE" == "0" ]]; then
+    DISCOVER_ARGS+=(--require-live)
+  fi
+
+  info "Asking Garmin for the latest live system software..."
+  python3 "$SCRIPT_DIR/discover-firmware.py" "${DISCOVER_ARGS[@]}" > "$JSON_TMP"
+
+  eval "$(python3 - "$JSON_TMP" <<'PY'
+import json, shlex, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+for key, value in (
+    ("PACKAGE_PART", d.get("packagePartNumber") or ""),
+    ("VERSION_LABEL", d.get("version") or ""),
+    ("URL", d.get("url") or ""),
+    ("MD5", d.get("md5") or ""),
+    ("SIZE", "" if d.get("size") is None else str(d.get("size"))),
+    ("ACCESS", d.get("accessLevel") or ""),
+    ("DISPLAY", d.get("displayName") or ""),
+    ("REINSTALL", "1" if d.get("isReinstall") else "0"),
+):
+    print(f"{key}={shlex.quote(str(value))}")
+PY
+)"
+
+  [[ -n "$URL" ]] || die "Garmin did not return a download URL"
+  [[ -n "$PACKAGE_PART" ]] || die "Garmin did not return a package part number"
+  [[ -n "$VERSION_LABEL" ]] || die "Garmin did not return a version"
+
+  if [[ -z "$SLUG" ]]; then
+    for id in "${!PKG[@]}"; do
+      if [[ "$id" == "$PACKAGE_PART" ]]; then
+        IFS='|' read -r LABEL SLUG _dev <<< "${PKG[$id]}"
+        break
+      fi
+    done
+  fi
+  [[ -n "${SLUG:-}" ]] || SLUG="model-${PACKAGE_PART//[^A-Za-z0-9._-]/_}"
+  [[ -n "${LABEL:-}" ]] || LABEL="$PACKAGE_PART"
 fi
-
-[[ -n "$MODEL" ]] || { usage; die "Specify --model ID or --auto"; }
-[[ -n "${PKG[$MODEL]:-}" ]] || die "Unknown package id '$MODEL'. Use --list."
-
-IFS='|' read -r LABEL SLUG URL <<< "${PKG[$MODEL]}"
 
 mkdir -p "$FW_ROOT/downloads" "$FW_ROOT/extracted"
-ZIP="$FW_ROOT/downloads/${SLUG}-15.19.zip"
 OUT="$FW_ROOT/extracted/$SLUG"
+SAFE_VERSION="${VERSION_LABEL//[^A-Za-z0-9._-]/_}"
+BASE_EXT="${URL%%\?*}"
+BASE_EXT="${BASE_EXT##*.}"
+case "${BASE_EXT,,}" in
+  zip|gsp|gcd) EXT="${BASE_EXT,,}" ;;
+  *) EXT="bin" ;;
+esac
+DL="$FW_ROOT/downloads/${SLUG}-${SAFE_VERSION}.${EXT}"
 
-info "Model:   $LABEL ($MODEL)"
+info "Model:   ${LABEL:-$PACKAGE_PART}"
+info "Version: $VERSION_LABEL (access: $ACCESS)"
+if [[ "${REINSTALL:-0}" == "1" ]]; then
+  info "Garmin flags this as a reinstall (the watch may already be on this version)"
+fi
 info "Source:  $URL"
-info "ZIP:     ${ZIP#"$REPO_DIR"/}"
+info "File:    ${DL#"$REPO_DIR"/}"
 
-command -v curl >/dev/null 2>&1 || die "curl is required"
-command -v unzip >/dev/null 2>&1 || die "unzip is required"
-
-if [[ -f "$ZIP" ]]; then
+if [[ -f "$DL" ]]; then
   info "Using existing download (delete it to re-download)"
 else
-  curl -fL --retry 3 --progress-bar -o "$ZIP" "$URL"
+  CURL_URL="${URL// /%20}"
+  curl -fL --retry 3 --progress-bar -o "$DL" "$CURL_URL"
 fi
 
-unzip -tq "$ZIP" >/dev/null || die "Downloaded ZIP is corrupt: $ZIP"
+ACTUAL_SIZE="$(stat -c %s "$DL")"
+if [[ -n "$SIZE" && "$ACTUAL_SIZE" != "$SIZE" ]]; then
+  rm -f "$DL"
+  die "Downloaded size $ACTUAL_SIZE does not match Garmin's $SIZE; deleted the file"
+fi
 
-TMP="$FW_ROOT/extracted/.tmp-$SLUG"
-rm -rf "$TMP" "$OUT"
-mkdir -p "$TMP" "$OUT"
-unzip -q -o "$ZIP" -d "$TMP"
+if [[ -n "$MD5" ]]; then
+  ACTUAL_MD5="$(md5sum "$DL" | awk '{print $1}')"
+  if [[ "$ACTUAL_MD5" != "$MD5" ]]; then
+    rm -f "$DL"
+    die "MD5 mismatch (got $ACTUAL_MD5, expected $MD5); deleted the file"
+  fi
+  info "MD5 verified: $ACTUAL_MD5"
+fi
 
-SRC_GSP="$(find "$TMP" -iname 'gupdate.gsp' -print -quit)"
-SRC_FORCE="$(find "$TMP" -iname 'force.tmp' -print -quit)"
-[[ -n "$SRC_GSP" ]] || die "gupdate.gsp not found inside $ZIP"
-[[ -n "$SRC_FORCE" ]] || die "force.tmp not found inside $ZIP"
+rm -rf "$OUT"
+mkdir -p "$OUT"
 
-cp -f "$SRC_GSP" "$OUT/gupdate.gsp"
-cp -f "$SRC_FORCE" "$OUT/force.tmp"
+if [[ "$EXT" == "zip" ]] || file "$DL" | grep -qi 'zip archive'; then
+  TMP="$FW_ROOT/extracted/.tmp-$SLUG"
+  rm -rf "$TMP"
+  mkdir -p "$TMP"
+  unzip -tq "$DL" >/dev/null || die "Downloaded ZIP is corrupt: $DL"
+  unzip -q -o "$DL" -d "$TMP"
+  SRC_GSP="$(find "$TMP" -iname 'gupdate.gsp' -print -quit)"
+  SRC_FORCE="$(find "$TMP" -iname 'force.tmp' -print -quit)"
+  [[ -n "$SRC_GSP" ]] || die "gupdate.gsp not found inside $DL"
+  cp -f "$SRC_GSP" "$OUT/gupdate.gsp"
+  if [[ -n "$SRC_FORCE" ]]; then
+    cp -f "$SRC_FORCE" "$OUT/force.tmp"
+  else
+    : > "$OUT/force.tmp"
+  fi
+  rm -rf "$TMP"
+elif [[ "$EXT" == "gsp" ]]; then
+  cp -f "$DL" "$OUT/gupdate.gsp"
+  : > "$OUT/force.tmp"
+elif [[ "$EXT" == "gcd" ]]; then
+  die "This package is GUPDATE.GCD. This guide targets Instinct 3 GUPDATE.GSP packages."
+else
+  die "Unrecognized package format: $DL"
+fi
+
 SHA="$(sha256sum "$OUT/gupdate.gsp" | awk '{print $1}')"
 printf '%s  gupdate.gsp\n' "$SHA" > "$OUT/gupdate.gsp.sha256"
-rm -rf "$TMP"
 
-if [[ -n "${KNOWN_SHA[$MODEL]:-}" && "$SHA" != "${KNOWN_SHA[$MODEL]}" ]]; then
-  die "SHA-256 mismatch for $MODEL: got $SHA"
-fi
+cat > "$OUT/version.txt" <<EOF
+package=${PACKAGE_PART}
+version=${VERSION_LABEL}
+access=${ACCESS}
+source=${URL}
+md5=${MD5}
+sha256=${SHA}
+display=${DISPLAY}
+fetched=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
 
 info "Extracted to: ${OUT#"$REPO_DIR"/}"
 stat -c 'gupdate.gsp: %s bytes' "$OUT/gupdate.gsp"
 echo "sha256: $SHA"
-
-if [[ -n "${KNOWN_SHA[$MODEL]:-}" ]]; then
-  info "SHA-256 matches the known-good value for this model"
-else
-  info "No known-good hash for this model; recorded the computed hash"
-fi
-
 echo
 info "Install with: ./scripts/garmin-watch.sh install --package \"${OUT#"$REPO_DIR"/}\""

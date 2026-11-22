@@ -6,7 +6,7 @@ Copy this template into an issue, but **remove unique identifiers**.
 Model (Description): Instinct 3 - 45mm, Solar
 PartNumber:          006-B4585-00
 SoftwareVersion:     521 (5.21)
-Target package:      006-V4585-00 / 15.19
+Target package:      006-V4585-00 (latest live, 15.19 at time of writing)
 Free space before:   ~21 MB
 Free space after:    ~34 MB (after cleanup)
 Result:              1519 (15.19), ~58 MB free
